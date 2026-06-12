@@ -74,7 +74,41 @@ func main() {
 
 // Placeholder handlers
 
-func getStats(c *fiber.Ctx) error { return c.SendStatus(fiber.StatusNotImplemented) }
+func getStats(c *fiber.Ctx) error {
+	var totalPaid int64
+	var activeChallenges int64
+	var completedSubmissions int64
+
+	// Count active challenges
+	DB.Model(&Challenge{}).Where("status = ?", "active").Count(&activeChallenges)
+
+	// Count completed submissions
+	DB.Model(&Submission{}).Where("status = ?", "completed").Count(&completedSubmissions)
+
+	// Compute total sats paid out
+	var challenges []Challenge
+	DB.Joins("JOIN submissions ON submissions.challenge_id = challenges.id").
+		Where("submissions.status = ?", "completed").
+		Find(&challenges)
+
+	for _, ch := range challenges {
+		totalPaid += ch.RewardSats
+	}
+
+	// Get wallet balance
+	walletBalance, err := lnClient.GetBalance()
+	if err != nil {
+		log.Printf("Error fetching wallet balance: %v", err)
+		walletBalance = 0
+	}
+
+	return c.JSON(fiber.Map{
+		"total_sats_paid":       totalPaid,
+		"active_challenges":     activeChallenges,
+		"completed_submissions": completedSubmissions,
+		"wallet_balance_sats":   walletBalance,
+	})
+}
 func createUser(c *fiber.Ctx) error {
 	type Request struct {
 		Username         string `json:"username"`
