@@ -56,3 +56,43 @@ body {
 ::-webkit-scrollbar-thumb:hover {
   background: var(--border-color-focus);
 }
+
+/* Premium Glassmorphic Cards & Layouts */
+.container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 0 1.5rem;
+}
+
+.card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  padding: 1.5rem;
+  box-shadow: var(--shadow-lg);
+  transition: transform var(--transition-fast), border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.card:hover {
+  transform: translateY(-2px);
+  border-color: var(--border-color-focus);
+  box-shadow: var(--glow-orange), var(--shadow-lg);
+}
+
+/* Premium Form Elements */
+.input-field {
+  width: 100%;
+  background-color: var(--bg-input);
+  border: 1px solid var(--border-color);
+  color: var(--text-primary);
+  padding: 0.75rem 1rem;
+  border-radius: 8px;
+  font-size: 0.95rem;
+  outline: none;
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.input-field:focus {
+  border-color: var(--accent-orange);
+  box-shadow: 0 0 0 2px rgba(247, 147, 26, 0.2);
+}
