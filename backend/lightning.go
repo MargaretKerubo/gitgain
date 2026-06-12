@@ -106,3 +106,80 @@ func (l *LndRestClient) GetBalance() (int64, error) {
 
 	return balance, nil
 }
+
+func (l *LndRestClient) SendPayment(invoice string) (string, error) {
+	payload := map[string]interface{}{
+		"payment_request": invoice,
+		"fee_limit": map[string]interface{}{
+			"fixed": 1000, // max fee 1000 sats
+		},
+	}
+
+	jsonPayload, err := json.Marshal(payload)
+	if err != nil {
+		return "", err
+	}
+
+	req, err := http.NewRequest("POST", fmt.Sprintf("%s/v2/router/send", l.Host), bytes.NewBuffer(jsonPayload))
+	if err != nil {
+		return "", err
+	}
+
+	req.Header.Set("Grpc-Metadata-macaroon", l.MacaroonHex)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := l.httpClient.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("failed to send payment (HTTP %d): %s", resp.StatusCode, string(body))
+	}
+
+	// Response is a stream of updates. Read chunks until we find "SUCCEEDED" or "FAILED".
+	reader := bufio.NewReader(resp.Body)
+	for {
+		line, err := reader.ReadBytes('\n')
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			return "", err
+		}
+
+		var update struct {
+			Result struct {
+				Status          string `json:"status"`
+				PaymentHash     string `json:"payment_hash"`
+				PaymentPreimage string `json:"payment_preimage"`
+				FailureReason   string `json:"failure_reason"`
+			} `json:"result"`
+		}
+
+		if err := json.Unmarshal(line, &update); err != nil {
+			// Some LND versions output a flatter structure, check that too
+			var flatUpdate struct {
+				Status          string `json:"status"`
+				PaymentHash     string `json:"payment_hash"`
+				PaymentPreimage string `json:"payment_preimage"`
+				FailureReason   string `json:"failure_reason"`
+			}
+			if errFlat := json.Unmarshal(line, &flatUpdate); errFlat == nil && flatUpdate.Status != "" {
+				update.Result = flatUpdate
+			} else {
+				continue // Skip malformed lines
+			}
+		}
+
+		if update.Result.Status == "SUCCEEDED" {
+			return update.Result.PaymentPreimage, nil
+		} else if update.Result.Status == "FAILED" {
+			return "", fmt.Errorf("payment failed: %s", update.Result.FailureReason)
+		}
+	}
+
+	return "", fmt.Errorf("payment stream ended without confirmation status")
+}
