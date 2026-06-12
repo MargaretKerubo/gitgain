@@ -75,8 +75,60 @@ func main() {
 // Placeholder handlers
 
 func getStats(c *fiber.Ctx) error { return c.SendStatus(fiber.StatusNotImplemented) }
-func createUser(c *fiber.Ctx) error { return c.SendStatus(fiber.StatusNotImplemented) }
-func getUser(c *fiber.Ctx) error { return c.SendStatus(fiber.StatusNotImplemented) }
+func createUser(c *fiber.Ctx) error {
+	type Request struct {
+		Username         string `json:"username"`
+		Email            string `json:"email"`
+		GitHubUsername   string `json:"github_username"`
+		LightningAddress string `json:"lightning_address"`
+	}
+
+	var req Request
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	if req.Username == "" || req.Email == "" || req.GitHubUsername == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "username, email, and github_username are required"})
+	}
+
+	// Check if user already exists
+	var user User
+	result := DB.Where("github_username = ?", req.GitHubUsername).First(&user)
+	if result.Error == nil {
+		// Update user if they exist
+		user.Username = req.Username
+		user.Email = req.Email
+		user.LightningAddress = req.LightningAddress
+		DB.Save(&user)
+		return c.JSON(user)
+	}
+
+	// Create new user
+	user = User{
+		Username:         req.Username,
+		Email:            req.Email,
+		GitHubUsername:   req.GitHubUsername,
+		LightningAddress: req.LightningAddress,
+	}
+
+	if err := DB.Create(&user).Error; err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	return c.Status(fiber.StatusCreated).JSON(user)
+}
+
+func getUser(c *fiber.Ctx) error {
+	username := c.Params("username")
+
+	var user User
+	if err := DB.Where("username = ? OR github_username = ?", username, username).First(&user).Error; err != nil {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "user not found"})
+	}
+
+	return c.JSON(user)
+}
 func createChallenge(c *fiber.Ctx) error { return c.SendStatus(fiber.StatusNotImplemented) }
 func listChallenges(c *fiber.Ctx) error { return c.SendStatus(fiber.StatusNotImplemented) }
 func getChallenge(c *fiber.Ctx) error { return c.SendStatus(fiber.StatusNotImplemented) }
