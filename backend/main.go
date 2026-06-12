@@ -309,9 +309,4 @@ func triggerPayout(c *fiber.Ctx) error {
 	})
 }
 
-func handleGithubWebhook(c *fiber.Ctx) error {
-	// Stage 4 will implement signature verification and PR/Workflow run matching.
-	// For now, return a placeholder success response.
-	log.Println("Received Github Webhook (Placeholder)")
-	return c.SendStatus(fiber.StatusOK)
-}
+

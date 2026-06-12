@@ -171,6 +171,99 @@ func handlePullRequest(event WebhookPayload) error {
 }
 
 func handleWorkflowRun(event WebhookPayload) error {
-	// Implemented in next commit
+	if event.WorkflowRun == nil {
+		return nil
+	}
+
+	// Only process completed successful runs
+	if event.WorkflowRun.Status != "completed" || event.WorkflowRun.Conclusion != "success" {
+		return nil
+	}
+
+	// Find pending/failed submissions for this repository
+	var subs []Submission
+	err := DB.Preload("Challenge").Preload("User").
+		Joins("JOIN challenges ON challenges.id = submissions.challenge_id").
+		Where("challenges.repo_owner = ? AND challenges.repo_name = ? AND submissions.status IN (?, ?)",
+			event.Repository.Owner.Login, event.Repository.Name, "pending", "failed").
+		Find(&subs).Error
+
+	if err != nil {
+		return err
+	}
+
+	for _, sub := range subs {
+		// Fetch PR head branch to verify it matches this workflow head branch
+		apiURL := fmt.Sprintf("https://api.github.com/repos/%s/%s/pulls/%d",
+			sub.Challenge.RepoOwner, sub.Challenge.RepoName, sub.PullRequestNumber)
+
+		req, err := http.NewRequest("GET", apiURL, nil)
+		if err != nil {
+			continue
+		}
+
+		if pat := os.Getenv("GITHUB_PERSONAL_ACCESS_TOKEN"); pat != "" {
+			req.Header.Set("Authorization", "token "+pat)
+		}
+		req.Header.Set("User-Agent", "gitgain-backend")
+
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil || resp.StatusCode != http.StatusOK {
+			if resp != nil {
+				resp.Body.Close()
+			}
+			continue
+		}
+
+		var prDetails struct {
+			Head struct {
+				Ref string `json:"ref"`
+			} `json:"head"`
+		}
+
+		json.NewDecoder(resp.Body).Decode(&prDetails)
+		resp.Body.Close()
+
+		if prDetails.Head.Ref != event.WorkflowRun.HeadBranch {
+			continue // Not the PR that triggered the workflow run
+		}
+
+		log.Printf("Verification PASSED for submission ID %d (PR #%d)", sub.ID, sub.PullRequestNumber)
+
+		// Set status to verifications_passed
+		sub.Status = "verifications_passed"
+		DB.Save(&sub)
+
+		// Trigger automatic Lightning payment!
+		if sub.User.LightningAddress == "" {
+			sub.Status = "failed"
+			sub.ErrorMessage = "user lightning address is not configured"
+			DB.Save(&sub)
+			continue
+		}
+
+		preimage, err := lnClient.PayToLightningAddress(sub.User.LightningAddress, sub.Challenge.RewardSats)
+		if err != nil {
+			sub.Status = "failed"
+			sub.ErrorMessage = fmt.Sprintf("auto-payout failed: %v", err)
+			DB.Save(&sub)
+			log.Printf("Auto-payout failed for submission ID %d: %v", sub.ID, err)
+			continue
+		}
+
+		// Success payout update
+		sub.Status = "completed"
+		sub.PaymentHash = preimage
+		sub.ErrorMessage = ""
+		DB.Save(&sub)
+
+		// Mark challenge as completed
+		sub.Challenge.Status = "completed"
+		DB.Save(&sub.Challenge)
+
+		log.Printf("Auto-payout SUCCESSFUL for submission ID %d. Paid %d sats to %s. Preimage: %s",
+			sub.ID, sub.Challenge.RewardSats, sub.User.LightningAddress, preimage)
+	}
+
 	return nil
 }
