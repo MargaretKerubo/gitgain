@@ -129,9 +129,61 @@ func getUser(c *fiber.Ctx) error {
 
 	return c.JSON(user)
 }
-func createChallenge(c *fiber.Ctx) error { return c.SendStatus(fiber.StatusNotImplemented) }
-func listChallenges(c *fiber.Ctx) error { return c.SendStatus(fiber.StatusNotImplemented) }
-func getChallenge(c *fiber.Ctx) error { return c.SendStatus(fiber.StatusNotImplemented) }
+func createChallenge(c *fiber.Ctx) error {
+	type Request struct {
+		Title       string `json:"title"`
+		Description string `json:"description"`
+		RepoOwner   string `json:"repo_owner"`
+		RepoName    string `json:"repo_name"`
+		RewardSats  int64  `json:"reward_sats"`
+		CreatorID   uint   `json:"creator_id"`
+	}
+
+	var req Request
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	if req.Title == "" || req.Description == "" || req.RepoOwner == "" || req.RepoName == "" || req.RewardSats <= 0 || req.CreatorID == 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid challenge parameter inputs"})
+	}
+
+	challenge := Challenge{
+		Title:       req.Title,
+		Description: req.Description,
+		RepoOwner:   req.RepoOwner,
+		RepoName:    req.RepoName,
+		RewardSats:  req.RewardSats,
+		CreatorID:   req.CreatorID,
+		Status:      "active",
+	}
+
+	if err := DB.Create(&challenge).Error; err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	return c.Status(fiber.StatusCreated).JSON(challenge)
+}
+
+func listChallenges(c *fiber.Ctx) error {
+	var challenges []Challenge
+	if err := DB.Preload("Creator").Find(&challenges).Error; err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	return c.JSON(challenges)
+}
+
+func getChallenge(c *fiber.Ctx) error {
+	id := c.Params("id")
+
+	var challenge Challenge
+	if err := DB.Preload("Creator").First(&challenge, id).Error; err != nil {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "challenge not found"})
+	}
+
+	return c.JSON(challenge)
+}
 func createSubmission(c *fiber.Ctx) error { return c.SendStatus(fiber.StatusNotImplemented) }
 func listSubmissions(c *fiber.Ctx) error { return c.SendStatus(fiber.StatusNotImplemented) }
 func triggerPayout(c *fiber.Ctx) error { return c.SendStatus(fiber.StatusNotImplemented) }
