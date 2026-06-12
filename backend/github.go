@@ -132,12 +132,13 @@ func handlePullRequest(event WebhookPayload) error {
 		return nil
 	}
 
-	// Find the user who created the PR by their GitHub username (stored in git_hub_username)
+	// Find the user who created the PR by their GitHub username
 	var user User
-	if err := DB.Where("git_hub_username = ?", event.PullRequest.User.Login).First(&user).Error; err != nil {
+	if err := DB.Where("github_username = ?", event.PullRequest.User.Login).First(&user).Error; err != nil {
 		log.Printf("User with GitHub username %s not found, submission cannot be registered", event.PullRequest.User.Login)
 		return nil
 	}
+
 
 	// Check if a submission already exists
 	var sub Submission

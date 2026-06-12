@@ -14,7 +14,8 @@ type User struct {
 	ID               uint           `gorm:"primaryKey" json:"id"`
 	Username         string         `gorm:"uniqueIndex;not null" json:"username"`
 	Email            string         `gorm:"uniqueIndex;not null" json:"email"`
-	GitHubUsername   string         `gorm:"uniqueIndex;not null" json:"github_username"`
+	GitHubUsername   string         `gorm:"column:github_username;uniqueIndex;not null" json:"github_username"`
+
 	LightningAddress string         `json:"lightning_address"`
 	CreatedAt        time.Time      `json:"created_at"`
 	UpdatedAt        time.Time      `json:"updated_at"`
