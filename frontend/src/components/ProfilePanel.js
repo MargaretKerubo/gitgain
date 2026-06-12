@@ -1,7 +1,8 @@
 'use client';
 
 import React, { useState } from 'react';
-import { API_BASE, useUser } from '../../context/UserContext';
+import { API_BASE, useUser } from '../context/UserContext';
+
 
 export default function ProfilePanel() {
   const { user, refreshUser } = useUser();
