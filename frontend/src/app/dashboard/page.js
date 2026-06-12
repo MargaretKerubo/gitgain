@@ -1,8 +1,9 @@
 'use client';
 
 import React, { useEffect, useState, useCallback } from 'react';
-import { useUser, API_BASE } from '../context/UserContext';
-import ProfilePanel from '../components/ProfilePanel';
+import { useUser, API_BASE } from '../../context/UserContext';
+import ProfilePanel from '../../components/ProfilePanel';
+
 
 export default function DashboardPage() {
   const { user, loading } = useUser();
