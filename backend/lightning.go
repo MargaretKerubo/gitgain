@@ -183,3 +183,81 @@ func (l *LndRestClient) SendPayment(invoice string) (string, error) {
 
 	return "", fmt.Errorf("payment stream ended without confirmation status")
 }
+
+func (l *LndRestClient) PayToLightningAddress(address string, amountSats int64) (string, error) {
+	parts := strings.Split(address, "@")
+	if len(parts) != 2 {
+		return "", fmt.Errorf("invalid lightning address format: %s", address)
+	}
+
+	username, domain := parts[0], parts[1]
+	// LNURL-pay endpoint
+	lnurlURL := fmt.Sprintf("https://%s/.well-known/lnurlp/%s", domain, username)
+
+	// In test mode / localhost, we can fallback to http if needed, but standard LNURL-pay requires https
+	if domain == "localhost" || strings.HasPrefix(domain, "127.0.0.1") {
+		lnurlURL = fmt.Sprintf("http://%s/.well-known/lnurlp/%s", domain, username)
+	}
+
+	resp, err := l.httpClient.Get(lnurlURL)
+	if err != nil {
+		return "", fmt.Errorf("failed to fetch LNURL-pay endpoint: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("LNURL-pay endpoint returned HTTP %d", resp.StatusCode)
+	}
+
+	var params struct {
+		Callback    string `json:"callback"`
+		MinSendable int64  `json:"minSendable"` // in millisatoshis
+		MaxSendable int64  `json:"maxSendable"` // in millisatoshis
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&params); err != nil {
+		return "", fmt.Errorf("failed to decode LNURL-pay params: %v", err)
+	}
+
+	amountMsats := amountSats * 1000
+	if amountMsats < params.MinSendable || amountMsats > params.MaxSendable {
+		return "", fmt.Errorf("amount %d sats (%d msats) out of bounds (%d - %d msats)", amountSats, amountMsats, params.MinSendable, params.MaxSendable)
+	}
+
+	// Fetch invoice from callback
+	callbackURL, err := url.Parse(params.Callback)
+	if err != nil {
+		return "", fmt.Errorf("invalid callback URL: %v", err)
+	}
+
+	q := callbackURL.Query()
+	q.Set("amount", fmt.Sprintf("%d", amountMsats))
+	callbackURL.RawQuery = q.Encode()
+
+	invoiceResp, err := l.httpClient.Get(callbackURL.String())
+	if err != nil {
+		return "", fmt.Errorf("failed to request callback invoice: %v", err)
+	}
+	defer invoiceResp.Body.Close()
+
+	var invoiceData struct {
+		PR     string `json:"pr"` // Bolt11 Invoice
+		Status string `json:"status"`
+		Reason string `json:"reason"`
+	}
+
+	if err := json.NewDecoder(invoiceResp.Body).Decode(&invoiceData); err != nil {
+		return "", fmt.Errorf("failed to decode callback invoice response: %v", err)
+	}
+
+	if invoiceData.Status == "ERROR" {
+		return "", fmt.Errorf("LNURL callback returned error: %s", invoiceData.Reason)
+	}
+
+	if invoiceData.PR == "" {
+		return "", fmt.Errorf("LNURL callback did not return a payment request (pr)")
+	}
+
+	// Pay the Bolt11 invoice we received
+	return l.SendPayment(invoiceData.PR)
+}
