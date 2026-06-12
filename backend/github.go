@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/gofiber/fiber/v2"
@@ -94,7 +95,78 @@ func handleGithubWebhook(c *fiber.Ctx) error {
 }
 
 func handlePullRequest(event WebhookPayload) error {
-	// Implemented in next commit
+	if event.PullRequest == nil {
+		return nil
+	}
+
+	// Only process opened, synchronized, or reopened pull requests
+	action := event.Action
+	if action != "opened" && action != "reopened" && action != "synchronize" {
+		return nil
+	}
+
+	// Parse challenge ID from PR body
+	re := regexp.MustCompile(`(?:gitgain\s+#|challenge\s+#|#challenge-)(\d+)`)
+	matches := re.FindStringSubmatch(event.PullRequest.Body)
+	if len(matches) < 2 {
+		log.Println("PR does not link a challenge ID in its body.")
+		return nil
+	}
+
+	challengeID, err := strconv.Atoi(matches[1])
+	if err != nil {
+		return err
+	}
+
+	var challenge Challenge
+	if err := DB.First(&challenge, challengeID).Error; err != nil {
+		log.Printf("Challenge #%d not found in database: %v", challengeID, err)
+		return nil
+	}
+
+	// Validate repo details match challenge (case-insensitive check)
+	if strings.ToLower(event.Repository.Owner.Login) != strings.ToLower(challenge.RepoOwner) ||
+		strings.ToLower(event.Repository.Name) != strings.ToLower(challenge.RepoName) {
+		log.Printf("Repository name mismatch for challenge #%d: expected %s/%s, got %s/%s",
+			challengeID, challenge.RepoOwner, challenge.RepoName, event.Repository.Owner.Login, event.Repository.Name)
+		return nil
+	}
+
+	// Find the user who created the PR by their GitHub username (stored in git_hub_username)
+	var user User
+	if err := DB.Where("git_hub_username = ?", event.PullRequest.User.Login).First(&user).Error; err != nil {
+		log.Printf("User with GitHub username %s not found, submission cannot be registered", event.PullRequest.User.Login)
+		return nil
+	}
+
+	// Check if a submission already exists
+	var sub Submission
+	result := DB.Where("challenge_id = ? AND user_id = ?", challenge.ID, user.ID).First(&sub)
+	if result.Error == nil {
+		// Update existing submission details
+		sub.PullRequestURL = event.PullRequest.HTMLURL
+		sub.PullRequestNumber = event.PullRequest.Number
+		sub.Status = "pending" // reset status for verification
+		sub.ErrorMessage = ""
+		DB.Save(&sub)
+		log.Printf("Updated existing submission ID %d to pending.", sub.ID)
+		return nil
+	}
+
+	// Create new submission
+	sub = Submission{
+		ChallengeID:       challenge.ID,
+		UserID:            user.ID,
+		PullRequestURL:    event.PullRequest.HTMLURL,
+		PullRequestNumber: event.PullRequest.Number,
+		Status:            "pending",
+	}
+
+	if err := DB.Create(&sub).Error; err != nil {
+		return err
+	}
+
+	log.Printf("Registered new submission ID %d for challenge #%d by %s", sub.ID, challenge.ID, user.Username)
 	return nil
 }
 
