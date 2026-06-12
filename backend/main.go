@@ -184,7 +184,45 @@ func getChallenge(c *fiber.Ctx) error {
 
 	return c.JSON(challenge)
 }
-func createSubmission(c *fiber.Ctx) error { return c.SendStatus(fiber.StatusNotImplemented) }
-func listSubmissions(c *fiber.Ctx) error { return c.SendStatus(fiber.StatusNotImplemented) }
+func createSubmission(c *fiber.Ctx) error {
+	type Request struct {
+		ChallengeID       uint   `json:"challenge_id"`
+		UserID            uint   `json:"user_id"`
+		PullRequestURL    string `json:"pull_request_url"`
+		PullRequestNumber int    `json:"pull_request_number"`
+	}
+
+	var req Request
+	if err := c.BodyParser(&req); err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	if req.ChallengeID == 0 || req.UserID == 0 || req.PullRequestURL == "" || req.PullRequestNumber == 0 {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "missing submission details"})
+	}
+
+	submission := Submission{
+		ChallengeID:       req.ChallengeID,
+		UserID:            req.UserID,
+		PullRequestURL:    req.PullRequestURL,
+		PullRequestNumber: req.PullRequestNumber,
+		Status:            "pending",
+	}
+
+	if err := DB.Create(&submission).Error; err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	return c.Status(fiber.StatusCreated).JSON(submission)
+}
+
+func listSubmissions(c *fiber.Ctx) error {
+	var submissions []Submission
+	if err := DB.Preload("Challenge").Preload("User").Find(&submissions).Error; err != nil {
+		return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"error": err.Error()})
+	}
+
+	return c.JSON(submissions)
+}
 func triggerPayout(c *fiber.Ctx) error { return c.SendStatus(fiber.StatusNotImplemented) }
 func handleGithubWebhook(c *fiber.Ctx) error { return c.SendStatus(fiber.StatusNotImplemented) }
