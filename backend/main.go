@@ -1,8 +1,10 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"os"
+	"strconv"
 
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
@@ -258,5 +260,58 @@ func listSubmissions(c *fiber.Ctx) error {
 
 	return c.JSON(submissions)
 }
-func triggerPayout(c *fiber.Ctx) error { return c.SendStatus(fiber.StatusNotImplemented) }
-func handleGithubWebhook(c *fiber.Ctx) error { return c.SendStatus(fiber.StatusNotImplemented) }
+func triggerPayout(c *fiber.Ctx) error {
+	idStr := c.Params("id")
+	id, err := strconv.Atoi(idStr)
+	if err != nil {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "invalid submission id"})
+	}
+
+	var sub Submission
+	if err := DB.Preload("Challenge").Preload("User").First(&sub, id).Error; err != nil {
+		return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"error": "submission not found"})
+	}
+
+	if sub.Status == "completed" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "submission payout has already been sent"})
+	}
+
+	// Trigger payment using user's Lightning Address (Option A)
+	if sub.User.LightningAddress == "" {
+		return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"error": "user does not have a lightning address configured"})
+	}
+
+	preimage, err := lnClient.PayToLightningAddress(sub.User.LightningAddress, sub.Challenge.RewardSats)
+	if err != nil {
+		sub.Status = "failed"
+		sub.ErrorMessage = err.Error()
+		DB.Save(&sub)
+		return c.Status(fiber.StatusBadGateway).JSON(fiber.Map{
+			"error":   fmt.Sprintf("lightning payout failed: %v", err),
+			"details": sub,
+		})
+	}
+
+	// Update status on success
+	sub.Status = "completed"
+	sub.PaymentHash = preimage // Store preimage
+	sub.ErrorMessage = ""
+	DB.Save(&sub)
+
+	// Optionally mark the challenge status as completed if needed
+	sub.Challenge.Status = "completed"
+	DB.Save(&sub.Challenge)
+
+	return c.JSON(fiber.Map{
+		"message":      "payout sent successfully",
+		"preimage":     preimage,
+		"submission":   sub,
+	})
+}
+
+func handleGithubWebhook(c *fiber.Ctx) error {
+	// Stage 4 will implement signature verification and PR/Workflow run matching.
+	// For now, return a placeholder success response.
+	log.Println("Received Github Webhook (Placeholder)")
+	return c.SendStatus(fiber.StatusOK)
+}
